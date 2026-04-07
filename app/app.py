@@ -882,7 +882,7 @@ with tab_llm:
 
             agreement_pct = agree / len(results)
             st.metric(
-                f"Zgodność SegFormer vs {st.session_state.get("llm_model_selected", "LLM").split(":")[0]}",
+                "Zgodność SegFormer vs " + st.session_state.get("llm_model_selected", "LLM").split(":")[0],
                 f"{agreement_pct:.1%}",
                 help="Procent patchów gdzie oba modele wskazały tę samą klasę",
             )
