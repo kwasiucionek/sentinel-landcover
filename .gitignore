@@ -1,0 +1,14 @@
+.env
+data/raw/
+data/processed/best_model.pt
+
+# Dodatkowe wykluczenia
+data/analyses/*
+!data/analyses/.gitkeep
+data/processed/*.pt
+data/processed/*.onnx.data
+
+data/wms_dataset/images/
+__pycache__/
+*.pyc
+*.pyo
