@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: kwasiek/postgis-pgvector:pg17
     environment:
       POSTGRES_DB: sentinel_landcover
       POSTGRES_USER: sentinel

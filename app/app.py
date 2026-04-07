@@ -66,9 +66,7 @@ def load_model_wms():
 
 @st.cache_resource
 def load_ollama():
-    import ollama
-
-    return ollama.Client(host=os.getenv("OLLAMA_HOST", "http://localhost:11434"))
+    return os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 
 @st.cache_resource
