@@ -43,6 +43,8 @@ def get_connection() -> PgConnection:
 
 
 def init_db():
+    """Inicjalizuje PostGIS + pgvector."""
+    from src.rag.indexer import init_vector_db
     """Tworzy tabelę z kolumną geometry jeśli nie istnieje."""
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -75,6 +77,7 @@ def init_db():
                 ON analyses(location);
             """)
         conn.commit()
+    init_vector_db()
 
 
 def save_analysis(record: AnalysisRecord) -> int:

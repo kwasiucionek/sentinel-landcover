@@ -1,156 +1,173 @@
+"""
+RAG retriever — pgvector + kimi-k2.5 (Ollama Cloud).
+"""
+import base64
 import io
 import os
-import base64
-import numpy as np
 from PIL import Image
-from .indexer import _get_embedder, _get_qdrant, QDRANT_COLLECTION
+import requests
 
-TOP_K = 5
+from src.rag.indexer import search_similar
 
-
-def search_similar(query: str, top_k: int = TOP_K) -> list[dict]:
-    vector  = _get_embedder().encode(query).tolist()
-    results = _get_qdrant().query_points(
-        collection_name=QDRANT_COLLECTION,
-        query=vector,
-        limit=top_k,
-        with_payload=True,
-    )
-    return [hit.payload for hit in results.points]
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "kimi-k2.5:cloud")
 
 
-def build_prompt(question: str, contexts: list[dict]) -> str:
-    context_str = "\n\n".join(
-        f"[Analiza {i+1}] {ctx['text']}"
-        for i, ctx in enumerate(contexts)
-    )
-    return f"""Jesteś ekspertem ds. teledetekcji i obserwacji Ziemi (Earth Observation).
-Odpowiadasz na pytania dotyczące analiz satelitarnych pokrycia terenu wykonanych modelem SegFormer.
-
-Dostępne analizy z historii:
-{context_str}
-
-Pytanie użytkownika: {question}
-
-Odpowiedz po polsku, konkretnie i rzeczowo. Jeśli dane są niewystarczające, powiedz o tym wprost."""
+def _ollama_headers() -> dict:
+    token = os.getenv("OLLAMA_TOKEN", "")
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def ask(question: str, ollama_client) -> str:
-    contexts = search_similar(question)
-    if not contexts:
-        return "Brak analiz w historii. Wykonaj najpierw analizę satelitarną."
-    prompt   = build_prompt(question, contexts)
-    model    = os.getenv("OLLAMA_MODEL", "qwen3-vl:235b-cloud")
-    response = ollama_client.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.message.content
+def _img_to_b64(img: Image.Image, max_size: int = 512) -> str:
+    img = img.copy()
+    img.thumbnail((max_size, max_size))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode()
 
 
-def describe_change_detection(
-    area: str,
-    date_a: str,
-    date_b: str,
-    result_a: dict,
-    result_b: dict,
-    diff_stats: dict,
-    change_pct: float,
-    ollama_client,
-) -> str:
-    """Generuje opis zmiany pokrycia terenu przez LLM."""
-    stats_a_str = ", ".join(
-        f"{cls} {pct:.1%}" for cls, pct in
-        sorted(result_a["class_stats"].items(), key=lambda x: x[1], reverse=True)
-        if pct > 0
-    )
-    stats_b_str = ", ".join(
-        f"{cls} {pct:.1%}" for cls, pct in
-        sorted(result_b["class_stats"].items(), key=lambda x: x[1], reverse=True)
-        if pct > 0
-    )
-    significant = {k: v for k, v in diff_stats.items() if abs(v) >= 0.02}
-    diff_str = ", ".join(
-        f"{cls} {'wzrósł' if v > 0 else 'zmalał'} o {abs(v):.1%}"
-        for cls, v in sorted(significant.items(), key=lambda x: abs(x[1]), reverse=True)
-    ) or "brak istotnych zmian"
+def ask(query: str, model: str | None = None) -> str:
+    """RAG chat — wyszukuje podobne analizy i odpowiada."""
+    model = model or OLLAMA_MODEL
+    hits  = search_similar(query, limit=5)
 
-    prompt = f"""Jesteś ekspertem ds. teledetekcji i analiz przestrzennych pracującym dla firmy GIS.
-Przygotuj krótki raport analityczny (3-4 zdania) na podstawie danych z klasyfikacji pokrycia terenu.
+    if not hits:
+        context = "Brak zapisanych analiz satelitarnych."
+    else:
+        parts = []
+        for h in hits:
+            stats = ", ".join(
+                f"{k}: {v:.0%}"
+                for k, v in sorted(
+                    h["class_stats"].items(), key=lambda x: x[1], reverse=True
+                )[:4]
+            )
+            parts.append(
+                f"[{h['analyzed_at'][:10]}] {h['location'] or h['tile_name']} "
+                f"— dominująca: {h['dominant_cls']}, {stats}, "
+                f"NDVI={h['ndvi_mean']:.2f}" if h['ndvi_mean'] else
+                f"[{h['analyzed_at'][:10]}] {h['location'] or h['tile_name']} "
+                f"— {h['dominant_cls']}"
+            )
+        context = "\n".join(parts)
 
-Obszar: {area}
-Porównanie: {date_a} → {date_b}
+    prompt = f"""Jesteś asystentem analizującym dane satelitarne Sentinel-2 dla obszaru Wrocławia.
 
-Pokrycie terenu {date_a}: {stats_a_str}
-Pokrycie terenu {date_b}: {stats_b_str}
-Powierzchnia zmian: {change_pct:.1%} obszaru
-Główne zmiany: {diff_str}
+Kontekst — ostatnie analizy pokrycia terenu:
+{context}
 
-Napisz rzeczowy raport po polsku. Wskaż możliwe przyczyny zmian i ich znaczenie \
-dla planowania przestrzennego lub zarządzania środowiskiem.
-Jeśli zmiany są małe (<5%), zaznacz że obszar jest stabilny."""
+Pytanie: {query}
 
-    model    = os.getenv("OLLAMA_MODEL", "qwen3-vl:235b-cloud")
-    response = ollama_client.chat(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.message.content
+Odpowiedz po polsku, konkretnie i zwięźle."""
+
+    try:
+        r = requests.post(
+            f"{OLLAMA_HOST}/api/chat",
+            headers=_ollama_headers(),
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json()["message"]["content"]
+    except Exception as e:
+        return f"Błąd modelu: {e}"
 
 
 def classify_patch_with_llm(
-    patch_img: Image.Image,
-    ollama_client,
-    model: str = None,
+    patch: Image.Image,
+    ollama_host: str,
+    model: str | None = None,
 ) -> tuple[str, str]:
-    """
-    Klasyfikuje patch satelitarny przez multimodalny LLM.
-    Zwraca (klasa, uzasadnienie).
-    """
+    """Klasyfikuje patch satelitarny przez LLM vision."""
     from src.dataset import CLASSES
-
-    model = model or os.getenv("OLLAMA_MODEL", "qwen3-vl:235b-cloud")
-
-    # Powiększ patch do 256x256 — lepiej widoczny dla LLM
-    img_large = patch_img.resize((256, 256), Image.NEAREST)
-    buf       = io.BytesIO()
-    img_large.save(buf, format="PNG")
-    img_b64   = base64.b64encode(buf.getvalue()).decode()
-
-    classes_str = ", ".join(CLASSES)
-    prompt = f"""You are an expert in satellite image analysis and Earth Observation.
-Classify this Sentinel-2 satellite image patch into exactly one of these land cover classes:
-{classes_str}
-
-Rules:
-- Reply with ONLY the class name on the first line
-- Then one sentence explaining what you see
-- Use the exact class name from the list above
-
-Example response:
-Forest
-Dense coniferous forest visible with dark green uniform texture."""
-
-    response = ollama_client.chat(
-        model=model,
-        messages=[{
-            "role":    "user",
-            "content": prompt,
-            "images":  [img_b64],
-        }],
+    model    = model or OLLAMA_MODEL
+    b64      = _img_to_b64(patch)
+    classes  = ", ".join(CLASSES)
+    prompt   = (
+        f"Classify this Sentinel-2 satellite image patch into exactly one of these "
+        f"land cover classes: {classes}.\n"
+        f"Reply with JSON: {{\"class\": \"ClassName\", \"reason\": \"brief explanation\"}}"
     )
-    text  = response.message.content.strip()
-    lines = text.split("\n", 1)
-    predicted_class = lines[0].strip()
-    reasoning       = lines[1].strip() if len(lines) > 1 else ""
+    try:
+        r = requests.post(
+            f"{ollama_host}/api/chat",
+            headers=_ollama_headers(),
+            json={
+                "model": model,
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": [b64],
+                }],
+                "stream": False,
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        import json, re
+        text = r.json()["message"]["content"]
+        m    = re.search(r'\{.*?\}', text, re.DOTALL)
+        if m:
+            data = json.loads(m.group())
+            cls  = data.get("class", "")
+            from src.dataset import CLASSES
+            if cls in CLASSES:
+                return cls, data.get("reason", "")
+        # Fallback — szukaj nazwy klasy w tekście
+        from src.dataset import CLASSES
+        for c in CLASSES:
+            if c.lower() in text.lower():
+                return c, text[:100]
+        return "Residential", text[:100]
+    except Exception as e:
+        return "Residential", str(e)
 
-    # Walidacja
-    if predicted_class not in CLASSES:
-        for cls in CLASSES:
-            if cls.lower() in predicted_class.lower():
-                predicted_class = cls
-                break
-        else:
-            predicted_class = "Residential"  # fallback
 
-    return predicted_class, reasoning
+def describe_change_detection(
+    result_a: dict,
+    result_b: dict,
+    date_a: str,
+    date_b: str,
+    area: str,
+    model: str | None = None,
+) -> str:
+    """Generuje raport change detection przez LLM."""
+    model = model or OLLAMA_MODEL
+
+    def fmt_stats(stats: dict) -> str:
+        return ", ".join(
+            f"{k}: {v:.0%}"
+            for k, v in sorted(stats.items(), key=lambda x: x[1], reverse=True)
+            if v > 0.01
+        )
+
+    prompt = f"""Jesteś ekspertem analizy danych satelitarnych Sentinel-2.
+
+Obszar: {area}
+Data A ({date_a}): {fmt_stats(result_a['class_stats'])}
+Data B ({date_b}): {fmt_stats(result_b['class_stats'])}
+
+Opisz po polsku zmiany pokrycia terenu między tymi datami.
+Zwróć uwagę na: zmiany lesistości, urbanizację, zmiany rolnicze.
+Oceń czy zmiany są znaczące czy mieszczą się w błędzie pomiaru.
+Odpowiedź max 3-4 zdania."""
+
+    try:
+        r = requests.post(
+            f"{OLLAMA_HOST}/api/chat",
+            headers=_ollama_headers(),
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json()["message"]["content"]
+    except Exception as e:
+        return f"Błąd generowania raportu: {e}"

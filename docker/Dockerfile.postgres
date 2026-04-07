@@ -1,0 +1,26 @@
+FROM postgis/postgis:17-3.5
+
+LABEL maintainer="Krzysztof Wasiucionek <kwasiek@gmail.com>" \
+      org.opencontainers.image.title="postgis-pgvector" \
+      org.opencontainers.image.description="PostgreSQL 17 with PostGIS 3.5 and pgvector 0.8.0 — spatial data + vector similarity search" \
+      org.opencontainers.image.version="17-3.5-0.8.0" \
+      org.opencontainers.image.authors="Krzysztof Wasiucionek" \
+      org.opencontainers.image.source="https://github.com/kwasiucionek/postgis-pgvector" \
+      org.opencontainers.image.licenses="MIT"
+
+# Instalacja pgvector
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       postgresql-server-dev-17 \
+       build-essential \
+       git \
+    && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && cd /tmp/pgvector \
+    && make && make install \
+    && apt-get remove -y postgresql-server-dev-17 build-essential git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* /tmp/pgvector
+
+# Auto-tworzenie rozszerzeń przy starcie
+RUN echo "CREATE EXTENSION IF NOT EXISTS postgis;" > /docker-entrypoint-initdb.d/10_postgis.sql \
+ && echo "CREATE EXTENSION IF NOT EXISTS vector;" > /docker-entrypoint-initdb.d/20_pgvector.sql

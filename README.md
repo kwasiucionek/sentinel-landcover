@@ -5,8 +5,7 @@ na podstawie zobrazowań satelitarnych Sentinel-2, zbudowane z myślą
 o zastosowaniach w systemach geoinformacyjnych — geoportalach miejskich,
 monitoringu środowiskowym, gospodarce wodnej i zarządzaniu kryzysowym.
 
-Projekt powstał jako portfolio demo dla stanowiska
-**Specjalista ds. Obserwacji Ziemi (ML/DL) — GISPartner Sp. z o.o.**
+
 
 ---
 

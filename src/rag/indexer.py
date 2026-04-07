@@ -1,88 +1,129 @@
+"""
+Indeksowanie analiz satelitarnych w pgvector.
+Zastępuje Qdrant — embeddingi trzymane w PostgreSQL obok geometrii PostGIS.
+"""
 import os
+import json
+import numpy as np
 from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
-from .store import AnalysisRecord, QDRANT_COLLECTION
+from src.rag.store_postgis import get_connection
 
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-VECTOR_SIZE = 384
-
-_embedder = None
-_qdrant   = None
+MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+_model: SentenceTransformer | None = None
 
 
-def _get_embedder() -> SentenceTransformer:
-    global _embedder
-    if _embedder is None:
-        _embedder = SentenceTransformer(EMBEDDING_MODEL)
-    return _embedder
+def get_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(MODEL_NAME)
+    return _model
 
 
-def _get_qdrant() -> QdrantClient:
-    global _qdrant
-    if _qdrant is None:
-        host = os.getenv("QDRANT_HOST", "localhost")
-        port = int(os.getenv("QDRANT_PORT", 6333))
-        _qdrant = QdrantClient(host=host, port=port)
-        _ensure_collection(_qdrant)
-    return _qdrant
+def init_vector_db():
+    """Tworzy tabelę embeddingów z pgvector."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+            cur.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_embeddings (
+                    id          SERIAL PRIMARY KEY,
+                    analysis_id INTEGER REFERENCES analyses(id) ON DELETE CASCADE,
+                    embedding   vector(384),
+                    text        TEXT NOT NULL,
+                    created_at  TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS embeddings_vector_idx
+                ON analysis_embeddings
+                USING ivfflat (embedding vector_cosine_ops)
+                WITH (lists = 10);
+            """)
+        conn.commit()
 
 
-def _ensure_collection(client: QdrantClient):
-    existing = [c.name for c in client.get_collections().collections]
-    if QDRANT_COLLECTION not in existing:
-        client.create_collection(
-            collection_name=QDRANT_COLLECTION,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-        )
-
-
-def record_to_text(record: AnalysisRecord) -> str:
-    stats_str = ", ".join(
-        f"{cls} {pct:.1%}"
-        for cls, pct in sorted(record.class_stats.items(),
-                                key=lambda x: x[1], reverse=True)
-        if pct > 0
+def build_text(record) -> str:
+    """Buduje tekst do embeddingu z rekordu analizy."""
+    dominant = record.dominant_cls or ""
+    location = record.location or ""
+    notes    = record.notes or ""
+    stats    = ", ".join(
+        f"{cls}: {pct:.0%}"
+        for cls, pct in sorted(
+            record.class_stats.items(), key=lambda x: x[1], reverse=True
+        )[:3]
     )
-    location = record.location or "nieznana lokalizacja"
-    notes    = f" Notatki: {record.notes}." if record.notes else ""
-
-    quant = ""
-    if record.ndvi_mean is not None:
-        quant += f" NDVI średnie: {record.ndvi_mean:.3f}."
-    if record.shannon_idx is not None:
-        quant += f" Indeks różnorodności Shannona: {record.shannon_idx:.3f}."
-    if record.dominant_cls and record.dominant_conf is not None:
-        quant += (f" Dominująca klasa: {record.dominant_cls} "
-                  f"(pewność {record.dominant_conf:.1%}).")
-    if record.patch_count is not None:
-        quant += f" Liczba przeanalizowanych patchów: {record.patch_count}."
-
+    ndvi = f"NDVI={record.ndvi_mean:.2f}" if record.ndvi_mean else ""
     return (
-        f"Analiza satelitarna: {record.tile_name}. "
-        f"Data: {record.analyzed_at[:10]}. "
-        f"Lokalizacja: {location}. "
-        f"Pokrycie terenu: {stats_str}.{quant}{notes}"
-    )
+        f"{location} {record.tile_name} {dominant} "
+        f"{stats} {ndvi} {notes} {record.analyzed_at[:10]}"
+    ).strip()
 
 
-def index_analysis(record: AnalysisRecord):
-    text    = record_to_text(record)
-    vector  = _get_embedder().encode(text).tolist()
-    _get_qdrant().upsert(
-        collection_name=QDRANT_COLLECTION,
-        points=[PointStruct(
-            id=record.id,
-            vector=vector,
-            payload={
-                "tile_name":    record.tile_name,
-                "analyzed_at":  record.analyzed_at,
-                "location":     record.location,
-                "class_stats":  record.class_stats,
-                "ndvi_mean":    record.ndvi_mean,
-                "shannon_idx":  record.shannon_idx,
-                "dominant_cls": record.dominant_cls,
-                "text":         text,
+def index_analysis(record) -> bool:
+    """Indeksuje analizę w pgvector. Zwraca True jeśli sukces."""
+    try:
+        init_vector_db()
+        text      = build_text(record)
+        embedding = get_model().encode(text).tolist()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Usuń stary embedding jeśli istnieje
+                cur.execute(
+                    "DELETE FROM analysis_embeddings WHERE analysis_id = %s",
+                    (record.id,)
+                )
+                cur.execute(
+                    """INSERT INTO analysis_embeddings (analysis_id, embedding, text)
+                       VALUES (%s, %s, %s)""",
+                    (record.id, embedding, text)
+                )
+            conn.commit()
+        return True
+    except Exception as e:
+        print(f"Błąd indeksowania: {e}")
+        return False
+
+
+def search_similar(query: str, limit: int = 5) -> list[dict]:
+    """Wyszukuje analizy podobne do zapytania."""
+    try:
+        init_vector_db()
+        q_emb = get_model().encode(query).tolist()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        a.id, a.tile_name, a.analyzed_at, a.location,
+                        a.dominant_cls, a.ndvi_mean, a.class_stats,
+                        a.notes, a.mask_path,
+                        ST_AsText(a.bbox) AS bbox_wkt,
+                        1 - (e.embedding <=> %s::vector) AS similarity,
+                        e.text
+                    FROM analysis_embeddings e
+                    JOIN analyses a ON a.id = e.analysis_id
+                    ORDER BY e.embedding <=> %s::vector
+                    LIMIT %s
+                """, (q_emb, q_emb, limit))
+                rows = cur.fetchall()
+        return [
+            {
+                "id":          r[0],
+                "tile_name":   r[1],
+                "analyzed_at": str(r[2]),
+                "location":    r[3],
+                "dominant_cls": r[4],
+                "ndvi_mean":   r[5],
+                "class_stats": r[6] if isinstance(r[6], dict) else json.loads(r[6]),
+                "notes":       r[7],
+                "mask_path":   r[8],
+                "bbox_wkt":    r[9],
+                "similarity":  float(r[10]),
+                "text":        r[11],
             }
-        )]
-    )
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"Błąd wyszukiwania: {e}")
+        return []

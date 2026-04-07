@@ -1,6 +1,6 @@
 services:
-  postgis:
-    image: postgis/postgis:16-3.4
+  postgres:
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: sentinel_landcover
       POSTGRES_USER: sentinel
@@ -8,21 +8,13 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgis_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel_landcover"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  qdrant:
-    image: qdrant/qdrant:v1.11.4
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    restart: unless-stopped
 
   app:
     build: .
@@ -32,9 +24,7 @@ services:
       - ./data/analyses:/app/data/analyses
       - ./data/processed:/app/data/processed
     environment:
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - POSTGIS_HOST=postgis
+      - POSTGIS_HOST=postgres
       - POSTGIS_PORT=5432
       - POSTGIS_DB=sentinel_landcover
       - POSTGIS_USER=sentinel
@@ -45,12 +35,9 @@ services:
       - CDSE_CLIENT_SECRET=${CDSE_CLIENT_SECRET}
       - CDSE_INSTANCE_ID=${CDSE_INSTANCE_ID}
     depends_on:
-      postgis:
+      postgres:
         condition: service_healthy
-      qdrant:
-        condition: service_started
     restart: unless-stopped
 
 volumes:
-  postgis_data:
-  qdrant_data:
+  postgres_data:
