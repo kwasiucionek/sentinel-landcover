@@ -301,11 +301,11 @@ with tab_analyze:
             class_stats = result["class_stats"]
             st.success(f"Przeanalizowano {result['patch_count']} patchów")
             c1, c2 = st.columns(2)
-            c1.image(img, caption="Oryginalny obraz", use_container_width=True)
+            c1.image(img, caption="Oryginalny obraz", width="stretch")
             c2.image(
                 result["mask_img"],
                 caption="Maska pokrycia terenu",
-                use_container_width=True,
+                width="stretch",
             )
             show_metrics(
                 record.dominant_cls,
@@ -357,7 +357,7 @@ with tab_history:
             ):
                 c1, c2 = st.columns([1, 2])
                 if os.path.exists(rec.mask_path):
-                    c1.image(rec.mask_path, caption="Maska", use_container_width=True)
+                    c1.image(rec.mask_path, caption="Maska", width="stretch")
                 with c2:
                     plot_class_distribution(rec.class_stats)
                 cols = c2.columns(3)
@@ -452,7 +452,7 @@ with tab_geo:
                 st.image(
                     img,
                     caption=f"Sentinel-2 {layer_s} · {area_s} · {date_str}",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
                 # Konwertuj do bytes do pobrania
@@ -473,11 +473,11 @@ with tab_geo:
                     dominant_cls = max(class_stats, key=class_stats.get)
                     shannon_idx = compute_shannon(class_stats)
                     c1, c2 = st.columns(2)
-                    c1.image(img, caption="Sentinel-2 RGB", use_container_width=True)
+                    c1.image(img, caption="Sentinel-2 RGB", width="stretch")
                     c2.image(
                         result["mask_img"],
                         caption="Maska naszego modelu",
-                        use_container_width=True,
+                        width="stretch",
                     )
                     show_metrics(
                         dominant_cls,
@@ -622,15 +622,15 @@ with tab_change:
             c1.image(
                 result_a["mask_img"],
                 caption=f"Maska A · {date_a_str}",
-                use_container_width=True,
+                width="stretch",
             )
             c2.image(
-                change["change_mask"], caption="Mapa zmian", use_container_width=True
+                change["change_mask"], caption="Mapa zmian", width="stretch"
             )
             c3.image(
                 result_b["mask_img"],
                 caption=f"Maska B · {date_b_str}",
-                use_container_width=True,
+                width="stretch",
             )
 
             # Warstwa referencyjna Esri LULC
@@ -656,7 +656,7 @@ with tab_change:
                     col.image(
                         esri_img,
                         caption=f"Esri LULC {year} · {cd['area']}",
-                        use_container_width=True,
+                        width="stretch",
                     )
                 else:
                     col.warning(f"Esri LULC {year} niedostępny")
