@@ -43,6 +43,21 @@ STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 os.makedirs(ANALYSES_DIR, exist_ok=True)
 init_db()
 
+# Reindeksuj analizy które nie mają embeddingów
+try:
+    from src.rag.indexer import index_analysis as _idx
+    from src.rag.store_postgis import get_all_analyses as _get_all, get_connection as _gc
+    _records = _get_all()
+    with _gc() as _conn:
+        with _conn.cursor() as _cur:
+            _cur.execute("SELECT analysis_id FROM analysis_embeddings")
+            _indexed = {r[0] for r in _cur.fetchall()}
+    for _r in _records:
+        if _r.id not in _indexed:
+            _idx(_r)
+except Exception as _e:
+    pass
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -376,7 +391,17 @@ with tab_history:
 with tab_chat:
     st.subheader("Chat z historią analiz")
     st.caption(
-        "qwen3-vl odpowiada na podstawie zapisanych wyników analiz satelitarnych"
+        "LLM odpowiada na podstawie zapisanych wyników analiz satelitarnych"
+    )
+    chat_model = st.selectbox(
+        "Model LLM",
+        [
+            "kimi-k2.5:cloud",
+            "qwen3-vl:235b-instruct-cloud",
+            "gemma4:31b-cloud",
+            "mistral-large-3:675b-cloud",
+        ],
+        key="chat_model",
     )
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -388,8 +413,8 @@ with tab_chat:
         with st.chat_message("user"):
             st.markdown(prompt)
         with st.chat_message("assistant"):
-            with st.spinner("qwen3-vl analizuje historię..."):
-                answer = ask(prompt, ollama)
+            with st.spinner("AI analizuje historię..."):
+                answer = ask(prompt, model=chat_model)
             st.markdown(answer)
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
@@ -703,9 +728,9 @@ with tab_change:
                     )
 
             st.markdown("---")
-            st.markdown("**🤖 Analiza AI (qwen3-vl)**")
+            st.markdown("**🤖 Analiza AI**")
             if st.button("📝 Generuj raport AI"):
-                with st.spinner("qwen3-vl analizuje zmiany..."):
+                with st.spinner("AI analizuje zmiany..."):
                     report = describe_change_detection(
                         area=cd["area"],
                         date_a=date_a_str,
@@ -747,7 +772,7 @@ with tab_llm:
     st.subheader("🤖 LLM vs DL — porównanie klasyfikatorów")
     st.caption(
         "Porównanie klasyfikacji satelitarnej: "
-        "SegFormer-B2 WMS fine-tuned vs qwen3-vl (multimodal LLM)"
+        "SegFormer Esri LULC vs LLM vision (multimodal)"
     )
 
     instance_id = os.getenv("CDSE_INSTANCE_ID", "")
