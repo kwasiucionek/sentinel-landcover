@@ -34,12 +34,8 @@ def init_vector_db():
                     created_at  TIMESTAMPTZ DEFAULT NOW()
                 );
             """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS embeddings_vector_idx
-                ON analysis_embeddings
-                USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 10);
-            """)
+            # Używamy zwykłego indeksu - ivfflat wymaga wielu rekordów
+            pass
         conn.commit()
 
 
@@ -93,6 +89,7 @@ def search_similar(query: str, limit: int = 5) -> list[dict]:
         q_emb = get_model().encode(query).tolist()
         with get_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute("SET enable_indexscan = off;")
                 cur.execute("""
                     SELECT
                         a.id, a.tile_name, a.analyzed_at, a.location,
@@ -105,6 +102,7 @@ def search_similar(query: str, limit: int = 5) -> list[dict]:
                     JOIN analyses a ON a.id = e.analysis_id
                     ORDER BY e.embedding <=> %s::vector
                     LIMIT %s
+                    -- bez indeksu ivfflat dla małych zbiorów
                 """, (q_emb, q_emb, limit))
                 rows = cur.fetchall()
         return [
