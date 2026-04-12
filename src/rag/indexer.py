@@ -125,3 +125,75 @@ def search_similar(query: str, limit: int = 5) -> list[dict]:
     except Exception as e:
         print(f"Błąd wyszukiwania: {e}")
         return []
+
+
+# ── Baza wiedzy EO ────────────────────────────────────────────────────────────
+
+def init_knowledge_table():
+    """Utwórz tabelę knowledge_base jeśli nie istnieje."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS knowledge_base (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    embedding vector(768),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+        conn.commit()
+
+
+def index_knowledge_base(force: bool = False) -> int:
+    """Zaindeksuj dokumenty wiedzy EO. Zwraca liczbę zaindeksowanych."""
+    from src.rag.eo_knowledge import DOCUMENTS
+    init_knowledge_table()
+    model = get_model()
+    indexed = 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Sprawdź ile już zaindeksowano
+            cur.execute("SELECT COUNT(*) FROM knowledge_base")
+            existing = cur.fetchone()[0]
+            if existing >= len(DOCUMENTS) and not force:
+                return 0  # Już zaindeksowane
+
+            # Wyczyść i zaindeksuj od nowa
+            cur.execute("DELETE FROM knowledge_base")
+            for doc in DOCUMENTS:
+                text = f"{doc['title']}: {doc['content']}"
+                emb = model.encode(text).tolist()
+                cur.execute("""
+                    INSERT INTO knowledge_base (title, content, embedding)
+                    VALUES (%s, %s, %s::vector)
+                """, (doc["title"], doc["content"], emb))
+                indexed += 1
+        conn.commit()
+    return indexed
+
+
+def search_knowledge(query: str, limit: int = 3) -> list[dict]:
+    """Wyszukaj dokumenty wiedzy EO podobne do zapytania."""
+    try:
+        init_knowledge_table()
+        q_emb = get_model().encode(query).tolist()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET enable_indexscan = off;")
+                cur.execute("""
+                    SELECT title, content,
+                           1 - (embedding <=> %s::vector) AS similarity
+                    FROM knowledge_base
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                """, (q_emb, q_emb, limit))
+                rows = cur.fetchall()
+        return [
+            {"title": r[0], "content": r[1], "similarity": float(r[2])}
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error("search_knowledge błąd: %s", e)
+        return []

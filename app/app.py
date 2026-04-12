@@ -43,6 +43,15 @@ STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 os.makedirs(ANALYSES_DIR, exist_ok=True)
 init_db()
 
+# Zaindeksuj bazę wiedzy EO
+try:
+    from src.rag.indexer import index_knowledge_base
+    n = index_knowledge_base()
+    if n > 0:
+        print(f"Zaindeksowano {n} dokumentów wiedzy EO")
+except Exception as _e:
+    pass
+
 # Reindeksuj analizy które nie mają embeddingów
 try:
     from src.rag.indexer import index_analysis as _idx
@@ -513,7 +522,7 @@ with tab_geo:
                     plot_class_distribution(class_stats)
 
                     # Warstwy referencyjne
-                    with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP"):
+                    with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP", expanded=True):
                         from src.bdot10k_client import (
                             fetch_bdot10k_area, fetch_egib_parcels,
                             fetch_mpzp_przeznaczenie, detect_mpzp_discrepancies,
@@ -996,7 +1005,7 @@ with tab_llm:
             )
 
             # Warstwy referencyjne
-            with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP"):
+            with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP", expanded=True):
                 from src.bdot10k_client import (
                     fetch_bdot10k_area, fetch_mpzp_przeznaczenie,
                     detect_mpzp_discrepancies, detect_bdot_discrepancies,
