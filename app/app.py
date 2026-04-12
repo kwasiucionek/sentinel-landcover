@@ -396,6 +396,46 @@ with tab_history:
                 if rec.notes:
                     c2.write(f"📝 {rec.notes}")
 
+                # Warstwy referencyjne
+                if rec.bbox_wkt:
+                    with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP"):
+                        from src.bdot10k_client import (
+                            fetch_bdot10k_area, fetch_mpzp_przeznaczenie,
+                            detect_mpzp_discrepancies, detect_bdot_discrepancies,
+                        )
+                        from src.ortofoto_client import fetch_ortofoto_area
+                        from shapely.wkt import loads as wkt_loads
+
+                        try:
+                            geom = wkt_loads(rec.bbox_wkt)
+                            lon_min_h, lat_min_h, lon_max_h, lat_max_h = geom.bounds
+
+                            col_h1, col_h2 = st.columns(2)
+                            with col_h1:
+                                with st.spinner("BDOT10k..."):
+                                    bdot_h = fetch_bdot10k_area(lon_min_h, lat_min_h, lon_max_h, lat_max_h)
+                                if bdot_h:
+                                    st.image(bdot_h, caption="BDOT10k (GUGiK)", use_container_width=True)
+                            with col_h2:
+                                with st.spinner("Ortofoto 2025..."):
+                                    orto_h = fetch_ortofoto_area(lon_min_h, lat_min_h, lon_max_h, lat_max_h)
+                                if orto_h:
+                                    st.image(orto_h, caption="Ortofoto 2025 (UM Wrocław)", use_container_width=True)
+
+                            col_h3, col_h4 = st.columns(2)
+                            with col_h3:
+                                st.markdown("**BDOT10k:**")
+                                for a in detect_bdot_discrepancies(rec.class_stats, bdot_h):
+                                    st.markdown(a)
+                            with col_h4:
+                                with st.spinner("MPZP..."):
+                                    mpzp_h = fetch_mpzp_przeznaczenie(lon_min_h, lat_min_h, lon_max_h, lat_max_h)
+                                st.markdown("**MPZP:**")
+                                for a in detect_mpzp_discrepancies(rec.class_stats, mpzp_h):
+                                    st.markdown(a)
+                        except Exception as _e:
+                            st.warning(f"Brak danych przestrzennych: {_e}")
+
 # ── Tab: Chat RAG ─────────────────────────────────────────────────────────────
 with tab_chat:
     st.subheader("Chat z historią analiz")
