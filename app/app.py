@@ -512,6 +512,39 @@ with tab_geo:
                     )
                     plot_class_distribution(class_stats)
 
+                    # Warstwy referencyjne
+                    with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP"):
+                        from src.bdot10k_client import (
+                            fetch_bdot10k_area, fetch_egib_parcels,
+                            fetch_mpzp_przeznaczenie, detect_mpzp_discrepancies,
+                            detect_bdot_discrepancies,
+                        )
+                        from src.ortofoto_client import fetch_ortofoto_area
+
+                        col_ref1, col_ref2 = st.columns(2)
+                        with col_ref1:
+                            with st.spinner("BDOT10k..."):
+                                bdot = fetch_bdot10k_area(lon_min, lat_min, lon_max, lat_max)
+                            if bdot:
+                                st.image(bdot, caption="BDOT10k (GUGiK)", use_container_width=True)
+                        with col_ref2:
+                            with st.spinner("Ortofoto 2025..."):
+                                orto = fetch_ortofoto_area(lon_min, lat_min, lon_max, lat_max)
+                            if orto:
+                                st.image(orto, caption="Ortofoto 2025 (UM Wrocław)", use_container_width=True)
+
+                        col_ref3, col_ref4 = st.columns(2)
+                        with col_ref3:
+                            st.markdown("**BDOT10k:**")
+                            for a in detect_bdot_discrepancies(class_stats, bdot):
+                                st.markdown(a)
+                        with col_ref4:
+                            with st.spinner("MPZP..."):
+                                mpzp = fetch_mpzp_przeznaczenie(lon_min, lat_min, lon_max, lat_max)
+                            st.markdown("**MPZP:**")
+                            for a in detect_mpzp_discrepancies(class_stats, mpzp):
+                                st.markdown(a)
+
                     if st.button("💾 Zapisz do historii"):
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         tile_name = f"cdse_{area_s.replace(' ', '_')}_{date_str}"
@@ -699,6 +732,58 @@ with tab_change:
                             f"**{info['name']}** → {info['eurosat'] or 'brak'}",
                             unsafe_allow_html=True,
                         )
+
+            # Warstwy referencyjne — BDOT10k + Ortofoto 2025
+            st.markdown("---")
+            st.markdown("**🗺️ Warstwy referencyjne GUGiK / UM Wrocław**")
+
+            from src.bdot10k_client import (
+                fetch_bdot10k_area, fetch_egib_parcels, detect_bdot_discrepancies
+            )
+            from src.ortofoto_client import fetch_ortofoto_area
+
+            lon_min_r, lat_min_r, lon_max_r, lat_max_r = WROCLAW_BBOXES[cd["area"]]
+
+            col_r1, col_r2, col_r3 = st.columns(3)
+
+            with col_r1:
+                with st.spinner("BDOT10k..."):
+                    bdot_img = fetch_bdot10k_area(
+                        lon_min_r, lat_min_r, lon_max_r, lat_max_r
+                    )
+                if bdot_img:
+                    st.image(bdot_img, caption="BDOT10k (GUGiK)", use_container_width=True)
+                else:
+                    st.warning("BDOT10k niedostępny")
+
+            with col_r2:
+                with st.spinner("Ortofoto 2025..."):
+                    orto_img = fetch_ortofoto_area(
+                        lon_min_r, lat_min_r, lon_max_r, lat_max_r
+                    )
+                if orto_img:
+                    st.image(orto_img, caption="Ortofoto 2025 (UM Wrocław)", use_container_width=True)
+                else:
+                    st.warning("Ortofoto niedostępne")
+
+            with col_r3:
+                with st.spinner("EGiB + MPZP..."):
+                    parcels = fetch_egib_parcels(
+                        lon_min_r, lat_min_r, lon_max_r, lat_max_r
+                    )
+                    from src.bdot10k_client import (
+                        fetch_mpzp_przeznaczenie, detect_mpzp_discrepancies
+                    )
+                    mpzp = fetch_mpzp_przeznaczenie(
+                        lon_min_r, lat_min_r, lon_max_r, lat_max_r
+                    )
+                st.metric("Działki EGiB", len(parcels))
+                st.markdown("**BDOT10k:**")
+                for a in detect_bdot_discrepancies(result_b["class_stats"], bdot_img):
+                    st.markdown(a)
+                st.markdown("**MPZP:**")
+                for a in detect_mpzp_discrepancies(result_b["class_stats"], mpzp):
+                    st.markdown(a)
 
             st.metric(
                 "Powierzchnia zmian",
@@ -909,6 +994,47 @@ with tab_llm:
                 f"{agreement_pct:.1%}",
                 help="Procent patchów gdzie oba modele wskazały tę samą klasę",
             )
+
+            # Warstwy referencyjne
+            with st.expander("🗺️ Warstwy referencyjne — BDOT10k / Ortofoto / MPZP"):
+                from src.bdot10k_client import (
+                    fetch_bdot10k_area, fetch_mpzp_przeznaczenie,
+                    detect_mpzp_discrepancies, detect_bdot_discrepancies,
+                )
+                from src.ortofoto_client import fetch_ortofoto_area
+
+                lon_min_l, lat_min_l, lon_max_l, lat_max_l = WROCLAW_BBOXES[data["area"]]
+                col_l1, col_l2 = st.columns(2)
+                with col_l1:
+                    with st.spinner("BDOT10k..."):
+                        bdot_l = fetch_bdot10k_area(lon_min_l, lat_min_l, lon_max_l, lat_max_l)
+                    if bdot_l:
+                        st.image(bdot_l, caption="BDOT10k (GUGiK)", use_container_width=True)
+                with col_l2:
+                    with st.spinner("Ortofoto 2025..."):
+                        orto_l = fetch_ortofoto_area(lon_min_l, lat_min_l, lon_max_l, lat_max_l)
+                    if orto_l:
+                        st.image(orto_l, caption="Ortofoto 2025 (UM Wrocław)", use_container_width=True)
+
+                with st.spinner("MPZP..."):
+                    mpzp_l = fetch_mpzp_przeznaczenie(lon_min_l, lat_min_l, lon_max_l, lat_max_l)
+
+                # Dominant klasa z wyników DL
+                dl_classes = {}
+                for res in results:
+                    dl_classes[res["dl_class"]] = dl_classes.get(res["dl_class"], 0) + 1
+                dominant_dl = max(dl_classes, key=dl_classes.get) if dl_classes else "Residential"
+                dl_stats = {k: v/len(results) for k, v in dl_classes.items()}
+
+                col_l3, col_l4 = st.columns(2)
+                with col_l3:
+                    st.markdown("**BDOT10k:**")
+                    for a in detect_bdot_discrepancies(dl_stats, bdot_l):
+                        st.markdown(a)
+                with col_l4:
+                    st.markdown("**MPZP:**")
+                    for a in detect_mpzp_discrepancies(dl_stats, mpzp_l):
+                        st.markdown(a)
 
             cols_per_row = 2
             for i in range(0, len(results), cols_per_row):
